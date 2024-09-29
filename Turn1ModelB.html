@@ -1,1 +1,205 @@
-T1MB
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crystal Defender</title>
+<style>
+body { font-family: 'Arial', sans-serif; background: #f0e68c; color: #8b4513; text-align: center; }
+#gameBoard { 
+    margin: 20px auto; 
+    border-collapse: collapse; 
+    background: #fffaf0; 
+    box-shadow: 0 0 20px rgba(0,0,0,0.1);
+}
+#gameBoard td {
+    width: 40px; height: 40px; 
+    border: 1px solid #daa520; 
+    text-align: center; 
+    vertical-align: middle;
+    font-size: 24px;
+}
+button { 
+    background: #ffd700; 
+    border: none; 
+    padding: 10px 20px; 
+    margin: 5px; 
+    cursor: pointer; 
+    color: #8b4513; 
+    font-weight: bold; 
+}
+button:hover { background: #ffa500; }
+#status, #controls { margin-top: 20px; }
+</style>
+</head>
+<body>
+<h1>Crystal Defender</h1>
+<table id="gameBoard"></table>
+<div id="status"></div>
+<div id="controls">
+    <button onclick="placeTower('shooter')">Shooter (50)</button>
+    <button onclick="placeTower('bomber')">Bomber (100)</button>
+    <button onclick="placeTower('freezer')">Freezer (75)</button>
+    <button onclick="useScanner()">Scanner</button>
+</div>
+<script>
+const board = document.getElementById('gameBoard');
+const status = document.getElementById('status');
+let game = {
+    points: 500,
+    lives: 3,
+    wave: 0,
+    enemies: [],
+    towers: [],
+    scannerUses: 3,
+    comboActive: false,
+    lastEnemyKill: Date.now(),
+    planningPhase: true,
+    currentPath: []
+};
+
+const symbols = {
+    base: '🏰', shooter: '🏹', bomber: '💣', freezer: '❄️',
+    red: '🔴', blue: '🔵', green: '🟢', boss: '👑'
+};
+
+function initBoard() {
+    board.innerHTML = '';
+    for(let y = 0; y < 10; y++) {
+        let row = board.insertRow();
+        for(let x = 0; x < 10; x++) {
+            let cell = row.insertCell();
+            if (x === 4 && y === 9) cell.innerHTML = symbols.base;
+        }
+    }
+    startWave();
+}
+
+function startWave() {
+    game.wave++;
+    game.enemies = generateEnemies(game.wave);
+    game.currentPath = generatePath();
+    game.planningPhase = true;
+    setTimeout(() => {
+        game.planningPhase = false;
+        moveEnemies();
+    }, 30000); // 30-second planning phase
+    updateDisplay();
+}
+
+function generateEnemies(wave) {
+    let count = 5 + (wave - 1) * 2;
+    let enemies = [];
+    for(let i = 0; i < count; i++) {
+        let type = i % 3 === 0 ? 'red' : i % 3 === 1 ? 'blue' : 'green';
+        if(wave % 5 === 0 && i === count - 1) type = 'boss';
+        enemies.push({type, position: -1, hits: type === 'boss' ? 10 : type === 'green' ? 3 : type === 'blue' ? 2 : 1});
+    }
+    return enemies;
+}
+
+function generatePath() {
+    // Simplified path generation for demonstration
+    return Array.from({length: 10}, (_, i) => i * 10);
+}
+
+function moveEnemies() {
+    if(game.planningPhase || game.lives <= 0) return;
+    game.enemies.forEach((enemy, index) => {
+        if(enemy.position >= 0) {
+            let nextPos = enemy.position + 1;
+            if(nextPos >= game.currentPath.length) {
+                game.lives--;
+                game.enemies.splice(index, 1);
+            } else {
+                enemy.position = nextPos;
+                if(enemy.type === 'boss') enemy.position++; // Boss moves twice as fast
+            }
+            checkEnemyAtPosition(enemy, game.currentPath[enemy.position]);
+        }
+    });
+    if(game.enemies.length === 0) {
+        setTimeout(startWave, 3000);
+    } else {
+        setTimeout(moveEnemies, 1000);
+    }
+    updateDisplay();
+}
+
+function checkEnemyAtPosition(enemy, position) {
+    game.towers.forEach(tower => {
+        if(towerAttack(tower, position, enemy)) {
+            if(enemy.hits <= 0) {
+                game.points += 10;
+                if(Date.now() - game.lastEnemyKill < 3000) {
+                    if(!game.comboActive) {
+                        game.comboActive = true;
+                        game.points *= 2;
+                        setTimeout(() => game.comboActive = false, 10000);
+                    }
+                }
+                game.lastEnemyKill = Date.now();
+                game.enemies = game.enemies.filter(e => e !== enemy);
+            }
+        }
+    });
+}
+
+function towerAttack(tower, position, enemy) {
+    let [tx, ty] = [Math.floor(position / 10), position % 10];
+    switch(tower.type) {
+        case 'shooter':
+            if(ty === tower.y && Math.abs(tx - tower.x) <= tower.range) {
+                enemy.hits -= tower.damage; return true;
+            }
+            break;
+        case 'bomber':
+            if(Math.abs(tx - tower.x) <= 1 && Math.abs(ty - tower.y) <= 1) {
+                enemy.hits -= tower.damage; return true;
+            }
+            break;
+        case 'freezer':
+            let distance = Math.abs(tx - tower.x) + Math.abs(ty - tower.y);
+            if(distance <= 2) {
+                // Freezer logic for slowing would be implemented here
+                enemy.hits -= tower.damage; return true;
+            }
+            break;
+    }
+    return false;
+}
+
+function placeTower(type) {
+    if(game.planningPhase && game.points >= (type === 'shooter' ? 50 : type === 'bomber' ? 100 : 75)) {
+        game.points -= (type === 'shooter' ? 50 : type === 'bomber' ? 100 : 75);
+        game.towers.push({type, x: -1, y: -1, damage: 1, range: 1});
+        updateDisplay();
+    }
+}
+
+function useScanner() {
+    if(game.scannerUses > 0) {
+        game.scannerUses--;
+        // Here you would reveal bonuses, for now just update display
+        updateDisplay();
+    }
+}
+
+function updateDisplay() {
+    let boardState = board.rows;
+    game.towers.forEach(t => {
+        if(t.x >= 0 && t.y >= 0) boardState[t.x].cells[t.y].innerHTML = symbols[t.type];
+    });
+    game.enemies.forEach(e => {
+        if(e.position >= 0) {
+            let pos = game.currentPath[e.position];
+            boardState[Math.floor(pos / 10)].cells[pos % 10].innerHTML = symbols[e.type];
+        }
+    });
+    status.innerHTML = `Points: ${game.points} | Lives: ${game.lives} | Wave: ${game.wave} | Scanner Uses: ${game.scannerUses} | Combo: ${game.comboActive ? 'Active' : 'Inactive'}`;
+}
+
+initBoard();
+</script>
+</body>
+</html>

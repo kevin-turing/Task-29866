@@ -1,1 +1,632 @@
-T1IR
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crystal Defender</title>
+    <style>
+        body {
+            font-family: 'Cinzel', serif;
+            background-color: #1a2a3a;
+            color: #ecf0f1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect fill="%232c3e50" width="50" height="50" x="0" y="0"/><rect fill="%232c3e50" width="50" height="50" x="50" y="50"/><rect fill="%2334495e" width="50" height="50" x="50" y="0"/><rect fill="%2334495e" width="50" height="50" x="0" y="50"/></svg>');
+            background-size: 100px 100px;
+        }
+        #game-container {
+            background-color: rgba(52, 73, 94, 0.9);
+            border: 4px solid #f1c40f;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 0 20px rgba(241, 196, 15, 0.5);
+        }
+        #game-grid {
+            display: grid;
+            grid-template-columns: repeat(10, 40px);
+            grid-gap: 2px;
+            margin-bottom: 20px;
+            position: relative;
+        }
+        .cell {
+            width: 40px;
+            height: 40px;
+            background-color: #2c3e50;
+            border: 1px solid #f1c40f;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+        .cell:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 10px rgba(241, 196, 15, 0.5);
+        }
+        .cell.path {
+            background-color: #95a5a6;
+        }
+        .tower {
+            z-index: 2;
+        }
+        .enemy {
+            font-weight: bold;
+            z-index: 1;
+            transition: all 0.5s ease;
+        }
+        #game-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+        button {
+            background-color: #f1c40f;
+            color: #2c3e50;
+            border: none;
+            padding: 10px 15px;
+            margin: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            font-family: inherit;
+            transition: all 0.3s ease;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #f39c12;
+            transform: translateY(-2px);
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        #message {
+            margin-top: 10px;
+            font-weight: bold;
+            height: 20px;
+            font-size: 18px;
+        }
+        .bonus {
+            position: absolute;
+            font-size: 18px;
+            color: #f1c40f;
+            animation: pulse 1s infinite alternate;
+        }
+        @keyframes pulse {
+            from { transform: scale(1); }
+            to { transform: scale(1.1); }
+        }
+        #notifications {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 300px;
+        }
+        .notification {
+            background-color: rgba(0, 0, 0, 0.8);
+            color: #fff;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            font-size: 16px;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: opacity 0.3s, transform 0.3s;
+        }
+        .notification.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+        .particle {
+            position: absolute;
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        #countdown {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <h1>Crystal Defender</h1>
+        <div id="countdown"></div>
+        <div id="game-info">
+            <span>Points: <span id="points">500</span></span>
+            <span>Lives: <span id="lives">3</span></span>
+            <span>Wave: <span id="wave">0</span></span>
+            <span>Combo: <span id="combo">0</span></span>
+        </div>
+        <div id="game-grid"></div>
+        <div>
+            <button id="shooter-btn" onclick="selectTower('Shooter')">Shooter (50)</button>
+            <button id="bomber-btn" onclick="selectTower('Bomber')">Bomber (100)</button>
+            <button id="freezer-btn" onclick="selectTower('Freezer')">Freezer (75)</button>
+            <button id="upgrade-btn" onclick="upgradeSelectedTower()" disabled>Upgrade Tower</button>
+            <button id="scanner-btn" onclick="useScanner()">Scanner (<span id="scanner-uses">3</span>)</button>
+        </div>
+        <div id="message"></div>
+    </div>
+    <div id="notifications"></div>
+
+    <script>
+        const GRID_SIZE = 10;
+        const PLANNING_PHASE_DURATION = 30;
+        const WAVE_DURATION = 60;
+        const ENEMY_MOVE_INTERVAL = 50; // 50ms for smoother movement
+        const TOWER_ATTACK_INTERVAL = 1000; // 1 second
+        let gameState = {
+            points: 500,
+            lives: 3,
+            wave: 0,
+            grid: [],
+            towers: [],
+            enemies: [],
+            path: [],
+            combo: 0,
+            comboTimer: null,
+            scannerUses: 3,
+            selectedTower: null,
+            phase: 'planning',
+            phaseTimer: null,
+            enemyMoveInterval: null,
+            towerAttackInterval: null,
+            countdownInterval: null
+        };
+
+        function initializeGame() {
+            const gridElement = document.getElementById('game-grid');
+            for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
+                const cell = document.createElement('div');
+                cell.className = 'cell';
+                cell.dataset.index = i;
+                cell.addEventListener('click', () => handleCellClick(i));
+                gridElement.appendChild(cell);
+                gameState.grid.push({ type: 'empty' });
+            }
+            gameState.grid[94] = { type: 'base' };
+            updateGrid();
+            startCountdown(5, 'Game starts in', startPlanningPhase);
+        }
+
+        function handleCellClick(index) {
+            if (gameState.phase === 'planning') {
+                if (gameState.selectedTower) {
+                    placeTower(index);
+                } else {
+                    selectTowerAt(index);
+                }
+            }
+        }
+
+        function selectTower(type) {
+            gameState.selectedTower = { type, level: 1 };
+            updateButtons();
+            showNotification(`Select a cell to place the ${type} tower.`);
+        }
+
+        function placeTower(index) {
+            const cost = getTowerCost(gameState.selectedTower.type);
+            if (gameState.points >= cost && gameState.grid[index].type === 'empty') {
+                gameState.points -= cost;
+                gameState.grid[index] = {
+                    type: 'tower',
+                    towerType: gameState.selectedTower.type,
+                    level: 1
+                };
+                gameState.towers.push({ index, ...gameState.grid[index] });
+                gameState.selectedTower = null;
+                updateGrid();
+                updateButtons();
+                showNotification(`Placed ${gameState.grid[index].towerType} tower.`);
+            } else if (gameState.grid[index].type !== 'empty') {
+                showNotification("Cannot place tower on an occupied cell.", "error");
+            } else {
+                showNotification("Not enough points to place this tower.", "error");
+            }
+        }
+
+        function getTowerCost(type) {
+            switch (type) {
+                case 'Shooter': return 50;
+                case 'Bomber': return 100;
+                case 'Freezer': return 75;
+                default: return 0;
+            }
+        }
+
+        function upgradeSelectedTower() {
+            if (gameState.selectedTower) {
+                const tower = gameState.grid[gameState.selectedTower.index];
+                const cost = getTowerCost(tower.towerType) * 2;
+                if (gameState.points >= cost) {
+                    gameState.points -= cost;
+                    tower.level++;
+                    gameState.selectedTower = null;
+                    updateGrid();
+                    updateButtons();
+                    showNotification(`Tower upgraded to level ${tower.level}.`);
+                } else {
+                    showNotification("Not enough points to upgrade this tower.", "error");
+                }
+            }
+        }
+
+        function selectTowerAt(index) {
+            const cell = gameState.grid[index];
+            if (cell.type === 'tower') {
+                gameState.selectedTower = { index, ...cell };
+                updateButtons();
+                showNotification(`Selected ${cell.towerType} tower. Click 'Upgrade Tower' to upgrade.`);
+            } else {
+                gameState.selectedTower = null;
+                updateButtons();
+            }
+        }
+
+        function useScanner() {
+            if (gameState.scannerUses > 0) {
+                gameState.scannerUses--;
+                const bonusCells = [];
+                for (let i = 0; i < 3; i++) {
+                    let index;
+                    do {
+                        index = Math.floor(Math.random() * GRID_SIZE * GRID_SIZE);
+                    } while (gameState.grid[index].type !== 'empty' || bonusCells.includes(index));
+                    bonusCells.push(index);
+                    gameState.grid[index].bonus = Math.random() < 0.5 ? 'points' : 'damage';
+                }
+                updateGrid();
+                showNotification("Scanner used. Bonuses revealed!");
+                updateButtons();
+            } else {
+                showNotification("No more scanner uses left.", "error");
+            }
+        }
+
+        function startPlanningPhase() {
+            gameState.phase = 'planning';
+            showNotification(`Planning phase started. ${PLANNING_PHASE_DURATION} seconds to prepare.`);
+            startCountdown(PLANNING_PHASE_DURATION, 'Planning phase ends in', startWave);
+            updateButtons();
+        }
+
+        function startWave() {
+            gameState.phase = 'wave';
+            gameState.wave++;
+            generatePath();
+            spawnEnemies();
+            showNotification(`Wave ${gameState.wave} started!`);
+            gameState.enemyMoveInterval = setInterval(moveEnemies, ENEMY_MOVE_INTERVAL);
+            gameState.towerAttackInterval = setInterval(attackEnemies, TOWER_ATTACK_INTERVAL);
+            startCountdown(WAVE_DURATION, 'Wave ends in', endWave);
+            updateButtons();
+        }
+
+        function endWave() {
+            clearInterval(gameState.enemyMoveInterval);
+            clearInterval(gameState.towerAttackInterval);
+            gameState.enemies = [];
+            updateGrid();
+            showNotification(`Wave ${gameState.wave} completed!`);
+            if (gameState.lives > 0) {
+                startPlanningPhase();
+            } else {
+                endGame();
+            }
+        }
+
+        function generatePath() {
+            gameState.path = [];
+            let currentCell = 4; // Start from the middle of the top row
+            gameState.path.push(currentCell);
+            
+            while (currentCell < 90) { // Until we reach the second-to-last row
+                const possibleMoves = [
+                    currentCell + 1, // Right
+                    currentCell - 1, // Left
+                    currentCell + 10 // Down
+                ].filter(cell => cell >= 0 && cell < 100 && Math.floor(cell / 10) <= Math.floor(currentCell / 10) + 1);
+                
+                currentCell = possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
+                gameState.path.push(currentCell);
+            }
+            
+            // Ensure the path ends at the player's base
+            gameState.path.push(94);
+            
+            // Mark path cells
+            gameState.path.forEach(cell => {
+                if (gameState.grid[cell].type === 'empty') {
+                    gameState.grid[cell].type = 'path';
+                }
+            });
+            
+            updateGrid();
+        }
+
+        function spawnEnemies() {
+            const enemyCount = 5 + (gameState.wave - 1) * 2;
+            for (let i = 0; i < enemyCount; i++) {
+                setTimeout(() => {
+                    const enemyType = gameState.wave % 5 === 0 ? 'boss' : ['red', 'blue', 'green'][Math.floor(Math.random() * 3)];
+                    gameState.enemies.push({
+                        type: enemyType,
+                        position: gameState.path[0],
+                        pathIndex: 0,
+                        health: enemyType === 'boss' ? 10 : (enemyType === 'green' ? 3 : (enemyType === 'blue' ? 2 : 1)),
+                        frozen: false,
+                        progress: 0
+                    });
+                    updateGrid();
+                }, i * 2000); // Spawn every 2 seconds
+            }
+        }
+
+        function moveEnemies() {
+            gameState.enemies.forEach(enemy => {
+                if (!enemy.frozen) {
+                    enemy.progress += enemy.type === 'boss' ? 0.04 : 0.02; // Bosses move twice as fast
+                    if (enemy.progress >= 1) {
+                        enemy.pathIndex++;
+                        enemy.progress = 0;
+                        if (enemy.pathIndex >= gameState.path.length) {
+                            gameState.lives--;
+                            showNotification("Life lost!", "error");
+                            gameState.enemies = gameState.enemies.filter(e => e !== enemy);
+                            if (gameState.lives <= 0) {
+                                endGame();
+                            }
+                        } else {
+                            enemy.position = gameState.path[enemy.pathIndex];
+                        }
+                    }
+                }
+                enemy.frozen = false; // Reset freeze status each turn
+            });
+            updateGrid();
+        }
+
+        function attackEnemies() {
+            gameState.towers.forEach(tower => {
+                const targets = getTargetsForTower(tower);
+                targets.forEach(target => {
+                    const damage = tower.level * 1.5 * (gameState.combo >= 5 ? 2 : 1);
+                    target.health -= damage;
+                    showNotification(`Enemy hit! -${damage} HP`, "info");
+                    if (target.health <= 0) {
+                        gameState.enemies = gameState.enemies.filter(e => e !== target);
+                        gameState.points += 10 * (gameState.combo >= 5 ? 2 : 1);
+                        incrementCombo();
+                        createParticles(target.position, getCellColor({ type: 'enemy', enemyType: target.type }));
+                        showNotification(`Enemy defeated! +${10 * (gameState.combo >= 5 ? 2 : 1)} points`, "success");
+                    }
+                    if (tower.towerType === 'Freezer') {
+                        target.frozen = true;
+                        showNotification("Enemy frozen!", "info");
+                    }
+                });
+            });
+            updateGrid();
+        }
+
+        function getTargetsForTower(tower) {
+            const { index, towerType, level } = tower;
+            const range = level + (towerType === 'Shooter' ? 2 : (towerType === 'Bomber' ? 1 : 2));
+            const targets = [];
+
+            gameState.enemies.forEach(enemy => {
+                const distance = Math.abs(Math.floor(index / 10) - Math.floor(enemy.position / 10)) +
+                                 Math.abs((index % 10) - (enemy.position % 10));
+                if (distance <= range) {
+                    if (towerType === 'Shooter' && (index % 10 === enemy.position % 10 || Math.floor(index / 10) === Math.floor(enemy.position / 10))) {
+                        targets.push(enemy);
+                    } else if (towerType === 'Bomber' && distance <= 1) {
+                        targets.push(enemy);
+                    } else if (towerType === 'Freezer' && distance <= 2) {
+                        targets.push(enemy);
+                    }
+                }
+            });
+
+            return targets;
+        }
+
+        function incrementCombo() {
+            gameState.combo++;
+            clearTimeout(gameState.comboTimer);
+            if (gameState.combo >= 5) {
+                showNotification("Combo x2 activated!", "success");
+                gameState.comboTimer = setTimeout(() => {
+                    gameState.combo = 0;
+                    updateGrid();
+                    showNotification("Combo ended", "info");
+                }, 10000);
+            }
+            updateGrid();
+        }
+
+        function updateGrid() {
+            const gridElement = document.getElementById('game-grid');
+            gameState.grid.forEach((cell, index) => {
+                const cellElement = gridElement.children[index];
+                cellElement.textContent = getCellContent(cell, index);
+                cellElement.style.backgroundColor = getCellColor(cell, index);
+                cellElement.className = `cell ${cell.type === 'path' ? 'path' : ''}`;
+                if (cell.bonus) {
+                    const bonusElement = document.createElement('div');
+                    bonusElement.className = 'bonus';
+                    bonusElement.textContent = cell.bonus === 'points' ? '💰' : '💥';
+                    cellElement.appendChild(bonusElement);
+                }
+            });
+            document.getElementById('points').textContent = gameState.points;
+            document.getElementById('lives').textContent = gameState.lives;
+            document.getElementById('wave').textContent = gameState.wave;
+            document.getElementById('combo').textContent = gameState.combo;
+            document.getElementById('scanner-uses').textContent = gameState.scannerUses;
+        }
+
+        function getCellContent(cell, index) {
+            if (gameState.enemies.some(enemy => enemy.position === index)) {
+                const enemy = gameState.enemies.find(enemy => enemy.position === index);
+                switch (enemy.type) {
+                    case 'red': return '👹';
+                    case 'blue': return '👻';
+                    case 'green': return '👽';
+                    case 'boss': return '👾';
+                }
+            }
+            switch (cell.type) {
+                case 'empty': return '';
+                case 'base': return '🏰';
+                case 'tower':
+                    switch (cell.towerType) {
+                        case 'Shooter': return '🏹';
+                        case 'Bomber': return '💣';
+                        case 'Freezer': return '❄️';
+                    }
+                case 'path': return '';
+            }
+        }
+
+        function getCellColor(cell, index) {
+            if (gameState.enemies.some(enemy => enemy.position === index)) {
+                const enemy = gameState.enemies.find(enemy => enemy.position === index);
+                switch (enemy.type) {
+                    case 'red': return '#e74c3c';
+                    case 'blue': return '#3498db';
+                    case 'green': return '#2ecc71';
+                    case 'boss': return '#f1c40f';
+                }
+            }
+            switch (cell.type) {
+                case 'empty': return '#2c3e50';
+                case 'base': return '#e74c3c';
+                case 'tower':
+                    switch (cell.towerType) {
+                        case 'Shooter': return '#3498db';
+                        case 'Bomber': return '#e67e22';
+                        case 'Freezer': return '#9b59b6';
+                    }
+                case 'path': return '#95a5a6';
+            }
+        }
+
+        function updateButtons() {
+            document.getElementById('shooter-btn').disabled = gameState.points < 50 || gameState.phase !== 'planning';
+            document.getElementById('bomber-btn').disabled = gameState.points < 100 || gameState.phase !== 'planning';
+            document.getElementById('freezer-btn').disabled = gameState.points < 75 || gameState.phase !== 'planning';
+            document.getElementById('upgrade-btn').disabled = !gameState.selectedTower || gameState.phase !== 'planning';
+            document.getElementById('scanner-btn').disabled = gameState.scannerUses <= 0;
+        }
+
+        function showNotification(message, type = "info") {
+            const notificationsContainer = document.getElementById('notifications');
+            const notification = document.createElement('div');
+            notification.className = 'notification';
+            notification.textContent = message;
+            
+            switch (type) {
+                case "error":
+                    notification.style.backgroundColor = "rgba(231, 76, 60, 0.8)";
+                    break;
+                case "success":
+                    notification.style.backgroundColor = "rgba(46, 204, 113, 0.8)";
+                    break;
+                default:
+                    notification.style.backgroundColor = "rgba(52, 152, 219, 0.8)";
+            }
+            
+            notificationsContainer.appendChild(notification);
+            setTimeout(() => {
+                notification.classList.add('show');
+            }, 10);
+            
+            setTimeout(() => {
+                notification.classList.remove('show');
+                setTimeout(() => {
+                    notification.remove();
+                }, 300);
+            }, 3000);
+        }
+
+        function createParticles(index, color) {
+            const gridElement = document.getElementById('game-grid');
+            const cellElement = gridElement.children[index];
+            const rect = cellElement.getBoundingClientRect();
+            
+            for (let i = 0; i < 10; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                particle.style.backgroundColor = color;
+                particle.style.left = rect.left + Math.random() * rect.width + 'px';
+                particle.style.top = rect.top + Math.random() * rect.height + 'px';
+                document.body.appendChild(particle);
+                
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 2 + 1;
+                const dx = Math.cos(angle) * speed;
+                const dy = Math.sin(angle) * speed;
+                
+                let opacity = 1;
+                const animate = () => {
+                    opacity -= 0.02;
+                    particle.style.opacity = opacity;
+                    particle.style.left = parseFloat(particle.style.left) + dx + 'px';
+                    particle.style.top = parseFloat(particle.style.top) + dy + 'px';
+                    
+                    if (opacity > 0) {
+                        requestAnimationFrame(animate);
+                    } else {
+                        particle.remove();
+                    }
+                };
+                requestAnimationFrame(animate);
+            }
+        }
+
+        function startCountdown(duration, message, callback) {
+            const countdownElement = document.getElementById('countdown');
+            let timeLeft = duration;
+            
+            const updateCountdown = () => {
+                countdownElement.textContent = `${message} ${timeLeft} seconds`;
+                if (timeLeft > 0) {
+                    timeLeft--;
+                    gameState.countdownInterval = setTimeout(updateCountdown, 1000);
+                } else {
+                    countdownElement.textContent = '';
+                    callback();
+                }
+            };
+            
+            updateCountdown();
+        }
+
+        function endGame() {
+            clearInterval(gameState.enemyMoveInterval);
+            clearInterval(gameState.towerAttackInterval);
+            clearTimeout(gameState.phaseTimer);
+            clearTimeout(gameState.countdownInterval);
+            showNotification(`Game Over! You survived ${gameState.wave} waves.`, "error");
+            document.querySelectorAll('button').forEach(button => button.disabled = true);
+        }
+
+        // Initialize the game
+        initializeGame();
+    </script>
+</body>
+</html>
